@@ -1,46 +1,54 @@
-from django.shortcuts import render
-from .forms import DatabaseConnectionForm
-import psycopg2  # For PostgreSQL, or another DB-API module for your DB
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from sqlalchemy import create_engine, MetaData
+from sqlalchemy.exc import SQLAlchemyError
+from urllib.parse import quote_plus
+from .serializers import DatabaseConnectionSerializer
 
 
-def home(request):
-    form = DatabaseConnectionForm()
-    metadata = None
-    error = None
-    show_modal = False
+class DatabaseMetadataAPIView(APIView):
+    def post(self, request):
+        serializer = DatabaseConnectionSerializer(data=request.data)
+        if serializer.is_valid():
+            db_type = serializer.validated_data['db_type']
+            user = serializer.validated_data['username']
+            password = serializer.validated_data['password']
+            host = serializer.validated_data['host']
+            port = serializer.validated_data['port']
+            database = serializer.validated_data['database_name']
 
-    if request.method == 'POST':
-        form = DatabaseConnectionForm(request.POST)
-        show_modal = True  # Show modal when the form is submitted
-        if form.is_valid():
-            show_modal = False  # Hide modal if the form is valid
             try:
-                # (Assuming PostgreSQL)
-                conn = psycopg2.connect(
-                    host=form.cleaned_data['host'],
-                    port=form.cleaned_data['port'],
-                    user=form.cleaned_data['username'],
-                    password=form.cleaned_data['password'],
-                    dbname=form.cleaned_data['database_name']
-                )
-                cur = conn.cursor()
-                cur.execute("SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema NOT IN ('information_schema', 'pg_catalog')")
-                tables = cur.fetchall()
-                metadata = {}
-                for table_schema, table_name in tables:
-                    cur.execute(f"SELECT column_name FROM information_schema.columns WHERE table_schema = %s AND table_name = %s", (table_schema, table_name))
-                    columns = cur.fetchall()
-                    if table_schema not in metadata:
-                        metadata[table_schema] = {}
-                    metadata[table_schema][table_name] = [col[0] for col in columns]
-                cur.close()
-                conn.close()
-            except Exception as e:
-                error = str(e)
+                encoded_password = quote_plus(password)
+                engine_url = ""
 
-    return render(request, 'home.html', {
-        'form': form,
-        'metadata': metadata,
-        'error': error,
-        'show_modal': show_modal,
-    })
+                if db_type == 'PostgreSQL':
+                    engine_url = f'postgresql://{user}:{encoded_password}@{host}:{port}/{database}'
+                elif db_type == 'MySQL':
+                    engine_url = f'mysql+pymysql://{user}:{encoded_password}@{host}:{port}/{database}'
+                elif db_type == 'SQLite':
+                    engine_url = f'sqlite:///{database}'
+                elif db_type == 'Oracle':
+                    engine_url = f'oracle://{user}:{encoded_password}@{host}:{port}/{database}'
+                elif db_type == 'MSSQL':
+                    engine_url = f'mssql+pyodbc://{user}:{encoded_password}@{host}:{port}/{database}?driver=ODBC+Driver+17+for+SQL+Server'
+
+                engine = create_engine(engine_url)
+                metadata = MetaData()
+                metadata.reflect(bind=engine)
+
+                metadata_info = {}
+                for schema in metadata.tables.values():
+                    schema_name = schema.schema or "default"
+                    if schema_name not in metadata_info:
+                        metadata_info[schema_name] = {}
+                    table_name = schema.name
+                    columns = [col.name for col in schema.columns]
+                    metadata_info[schema_name][table_name] = columns
+
+                return Response({'metadata': metadata_info}, status=status.HTTP_200_OK)
+
+            except SQLAlchemyError as e:
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

@@ -10,7 +10,7 @@
         }
         .container {
             display: flex;
-            height: 100vh;
+            min-height: 100vh;
         }
         .sidebar {
             width: 250px;
@@ -29,11 +29,12 @@
             padding: 10px 20px;
             border: none;
             cursor: pointer;
+            border-radius: 12px;
         }
 
         /* Modal styling */
         .modal {
-            display: {% if show_modal %}block{% else %}none{% endif %};
+            display: none;
             position: fixed;
             z-index: 1;
             left: 0;
@@ -41,7 +42,6 @@
             width: 100%;
             height: 100%;
             overflow: auto;
-            background-color: rgb(0, 0, 0);
             background-color: rgba(0, 0, 0, 0.4);
             padding-top: 60px;
         }
@@ -68,15 +68,18 @@
             cursor: pointer;
         }
 
+        /* Metadata styling */
         .metadata {
-            list-style-type: none;
+            list-style-type: none; /* Remove bullets */
             padding: 0;
         }
 
         /* Styling for expandable sections */
         .metadata li {
             margin: 10px 0;
+            position: relative;
         }
+
         .metadata label {
             cursor: pointer;
             display: block;
@@ -84,14 +87,38 @@
             background-color: #34495e;
             color: #ecf0f1;
             border-radius: 4px;
+            padding-left: 20px; /* Space for arrow */
+            position: relative;
+            margin: 2px;
         }
+
+        .metadata label::before {
+            content: '►'; /* Right arrow */
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 12px;
+        }
+
         .metadata input[type="checkbox"] {
             display: none;
         }
+
+        .metadata input[type="checkbox"]:checked + label::before {
+            content: '▼'; /* Down arrow */
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 12px;
+        }
+
         .metadata .nested {
             display: none;
             padding-left: 20px;
         }
+
         .metadata input[type="checkbox"]:checked ~ .nested {
             display: block;
         }
@@ -101,55 +128,119 @@
     <div class="container">
         <div class="sidebar">
             <h1>Metadata Tagging</h1>
-            <button class="add-source" onclick="document.getElementById('myModal').style.display='block'">Add Data Source</button>
+            <button class="add-source" onclick="document.getElementById('myModal').style.display='block'">+ Add Data Source</button>
 
-            {% if metadata %}
-                <ul class="metadata">
-                    {% for schema, tables in metadata.items %}
-                        <li>
-                            <input type="checkbox" id="schema-{{ forloop.counter }}">
-                            <label for="schema-{{ forloop.counter }}">{{ schema }}</label>
-                            <ul class="nested">
-                                {% for table, columns in tables.items %}
-                                    <li>
-                                        <input type="checkbox" id="table-{{ forloop.parentloop.counter }}-{{ forloop.counter }}">
-                                        <label for="table-{{ forloop.parentloop.counter }}-{{ forloop.counter }}">{{ table }}</label>
-                                        <ul class="nested">
-                                            {% for column in columns %}
-                                                <li>{{ column }}</li>
-                                            {% endfor %}
-                                        </ul>
-                                    </li>
-                                {% endfor %}
-                            </ul>
-                        </li>
-                    {% endfor %}
-                </ul>
-            {% elif error %}
-                <p>Error: {{ error }}</p>
-            {% endif %}
+            <div id="metadata-container" class="metadata">
+            </div>
         </div>
         <div class="main-content">
             <h1>Database Metadata</h1>
-            {% if metadata %}
-                <p>Connected to {{ form.cleaned_data.database_name }}:</p>
-            {% else %}
-                <p>No connection established.</p>
-            {% endif %}
+            <p id="status">No connection established.</p>
         </div>
     </div>
 
-    <!-- The Modal -->
     <div id="myModal" class="modal">
         <div class="modal-content">
             <span class="close" onclick="document.getElementById('myModal').style.display='none'">&times;</span>
             <h2>Enter Database Connection Details</h2>
-            <form method="POST">
+            <form id="db-form">
                 {% csrf_token %}
-                {{ form.as_p }}
+                <label for="db_type">Database Type:</label>
+                <select id="db_type" name="db_type">
+                    <option value="PostgreSQL">PostgreSQL</option>
+                    <option value="MySQL">MySQL</option>
+                    <option value="MSSQL">MSSQL</option>
+                </select>
+                <br>
+                <label for="host">Host:</label>
+                <input type="text" id="host" name="host" required>
+                <br>
+                <label for="port">Port:</label>
+                <input type="number" id="port" name="port" required>
+                <br>
+                <label for="username">Username:</label>
+                <input type="text" id="username" name="username" required>
+                <br>
+                <label for="password">Password:</label>
+                <input type="password" id="password" name="password" required>
+                <br>
+                <label for="database_name">Database Name:</label>
+                <input type="text" id="database_name" name="database_name" required>
+                <br>
                 <button type="submit">Connect</button>
             </form>
         </div>
     </div>
+
+    <script>
+        document.getElementById('db-form').onsubmit = function(event) {
+            event.preventDefault();
+
+            const formData = new FormData(event.target);
+            const data = Object.fromEntries(formData.entries());
+
+            fetch('/api/database-metadata/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.metadata) {
+                    document.getElementById('status').textContent = `Connected to ${data.database_name}:`;
+                    const metadataContainer = document.getElementById('metadata-container');
+                    metadataContainer.innerHTML = '';
+
+                    for (const [schema, tables] of Object.entries(data.metadata)) {
+                        const schemaElement = document.createElement('div');
+                        const schemaCheckbox = document.createElement('input');
+                        schemaCheckbox.type = 'checkbox';
+                        schemaCheckbox.id = `schema-${schema}`;
+                        const schemaLabel = document.createElement('label');
+                        schemaLabel.htmlFor = `schema-${schema}`;
+                        schemaLabel.textContent = schema;
+                        schemaElement.appendChild(schemaCheckbox);
+                        schemaElement.appendChild(schemaLabel);
+
+                        const nestedDiv = document.createElement('div');
+                        nestedDiv.className = 'nested';
+
+                        for (const [table, columns] of Object.entries(tables)) {
+                            const tableElement = document.createElement('div');
+                            const tableCheckbox = document.createElement('input');
+                            tableCheckbox.type = 'checkbox';
+                            tableCheckbox.id = `table-${table}`;
+                            const tableLabel = document.createElement('label');
+                            tableLabel.htmlFor = `table-${table}`;
+                            tableLabel.textContent = table;
+                            tableElement.appendChild(tableCheckbox);
+                            tableElement.appendChild(tableLabel);
+
+                            const columnsList = document.createElement('ul');
+                            columnsList.className = 'nested';
+                            for (const column of columns) {
+                                const columnItem = document.createElement('li');
+                                columnItem.textContent = column;
+                                columnsList.appendChild(columnItem);
+                            }
+                            tableElement.appendChild(columnsList);
+                            nestedDiv.appendChild(tableElement);
+                        }
+
+                        schemaElement.appendChild(nestedDiv);
+                        metadataContainer.appendChild(schemaElement);
+                    }
+                } else if (data.error) {
+                    document.getElementById('status').textContent = `Error: ${data.error}`;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+        };
+    </script>
 </body>
 </html>

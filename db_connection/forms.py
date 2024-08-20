@@ -3,9 +3,9 @@ from django import forms
 
 class DatabaseConnectionForm(forms.Form):
     DB_TYPE_CHOICES = [
-        ('postgresql', 'PostgreSQL'),
+        ('PostgreSQL', 'PostgreSQL'),
         ('mysql', 'MySQL'),
-        ('sql_server', 'SQL Server'),
+        ('MSSQL', 'MSSQL'),
     ]
     db_type = forms.ChoiceField(choices=DB_TYPE_CHOICES, label="Database Type")
     host = forms.CharField(max_length=100, label="Host")
